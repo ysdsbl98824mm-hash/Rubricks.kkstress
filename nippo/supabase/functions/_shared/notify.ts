@@ -1,29 +1,48 @@
 // 通知：メール（Resend）と、任意で Google チャット（非公開スペースの Webhook）
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4';
+import nodemailer from 'npm:nodemailer@6.9.16';
 
 const APP_NAME = Deno.env.get('APP_NAME') ?? '日報';
 const APP_URL = Deno.env.get('APP_URL') ?? '';
 
+/**
+ * メールを送る。設定の優先順：
+ *  1. SMTP_USER と SMTP_PASS があれば SMTP（Gmail など。ドメイン不要）
+ *  2. RESEND_API_KEY と MAIL_FROM があれば Resend（自分のドメインが要る）
+ *  3. どちらもなければ送らず、内容を関数のログに出す
+ */
 export async function sendMail(
   db: SupabaseClient, kind: string, to: string, subject: string, text: string, memberId?: string,
 ): Promise<boolean> {
-  const key = Deno.env.get('RESEND_API_KEY');
-  const from = Deno.env.get('MAIL_FROM');
   let ok = false, error: string | null = null;
-  if (!key || !from) {
-    error = 'メールの設定がありません（RESEND_API_KEY / MAIL_FROM）';
-    console.log(`[mail:${kind}] ${to} / ${subject}\n${text}`);
-  } else {
-    try {
+  const body = text + footer();
+  const fullSubject = `[${APP_NAME}] ${subject}`;
+  const smtpUser = Deno.env.get('SMTP_USER');
+  const smtpPass = Deno.env.get('SMTP_PASS');
+  const resendKey = Deno.env.get('RESEND_API_KEY');
+  const from = Deno.env.get('MAIL_FROM') ?? (smtpUser ? `${APP_NAME} <${smtpUser}>` : undefined);
+  try {
+    if (smtpUser && smtpPass) {
+      const port = Number(Deno.env.get('SMTP_PORT') ?? '465');
+      const transport = nodemailer.createTransport({
+        host: Deno.env.get('SMTP_HOST') ?? 'smtp.gmail.com', port, secure: port === 465,
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+      await transport.sendMail({ from, to, subject: fullSubject, text: body });
+      ok = true;
+    } else if (resendKey && from) {
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: [to], subject: `[${APP_NAME}] ${subject}`, text: text + footer() }),
+        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: [to], subject: fullSubject, text: body }),
       });
       ok = res.ok;
       if (!ok) error = `${res.status} ${(await res.text()).slice(0, 200)}`;
-    } catch (e) { error = String(e).slice(0, 200); }
-  }
+    } else {
+      error = 'メールの設定がありません（SMTP_USER / SMTP_PASS）';
+      console.log(`[mail:${kind}] ${to} / ${fullSubject}\n${body}`);
+    }
+  } catch (e) { error = String(e).slice(0, 200); }
   await db.from('notifications_log').insert({ kind, to_address: to, member_id: memberId ?? null, ok, error });
   return ok;
 }

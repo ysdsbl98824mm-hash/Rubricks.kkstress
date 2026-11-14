@@ -7,13 +7,19 @@ export default function Login({ onDone }: { onDone: () => void }) {
   const [code, setCode] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [viaMail, setViaMail] = useState(false);
   const [msg, setMsg] = useState<{ text: string; err?: boolean } | null>(null);
 
   async function send(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setMsg(null);
-    try { await api.sendCode(email.trim()); setSent(true); setMsg({ text: 'メールを送りました。届いた6桁のコードを入れてください。' }); }
+    try { await api.sendCode(email.trim()); setSent(true); setMsg({ text: 'メールを送りました。届いたコードを入れてください。' }); }
     catch (err) { setMsg({ text: errText(err), err: true }); }
     setBusy(false);
+  }
+  async function google() {
+    setBusy(true); setMsg(null);
+    try { await api.signInGoogle(); onDone(); }
+    catch (err) { setMsg({ text: errText(err), err: true }); setBusy(false); }
   }
   async function verify(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setMsg(null);
@@ -25,17 +31,25 @@ export default function Login({ onDone }: { onDone: () => void }) {
     <div className="center-sheet">
       <div className="title">日報</div>
       {!sent ? (
-        <form onSubmit={send}>
-          <div className="row"><label className="label" htmlFor="email">メール</label>
-            <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-          <div className="actions"><button className="btn" disabled={busy || !email}>コードを送る</button><Status msg={msg} /></div>
-          <p className="lead">登録したメールアドレスに、ログイン用のコードを送ります。パスワードはありません。</p>
-        </form>
+        <>
+          <div className="actions"><button type="button" className="btn" disabled={busy} onClick={google}>Googleでログイン</button></div>
+          <p className="lead">登録したメールアドレスのGoogleアカウントで入れます。</p>
+          {!viaMail ? (
+            <p className="small"><button type="button" className="link" onClick={() => setViaMail(true)}>Googleを使えないときは、メールのコードでログイン</button></p>
+          ) : (
+            <form onSubmit={send}>
+              <div className="row"><label className="label" htmlFor="email">メール</label>
+                <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+              <div className="actions"><button className="btn ghost" disabled={busy || !email}>コードを送る</button></div>
+            </form>
+          )}
+          <Status msg={msg} />
+        </>
       ) : (
         <form onSubmit={verify}>
           <p className="small muted">{email}</p>
           <div className="row"><label className="label" htmlFor="code">コード</label>
-            <input id="code" className="code-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} /></div>
+            <input id="code" className="code-input" inputMode="numeric" autoComplete="one-time-code" maxLength={10} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} /></div>
           <div className="actions">
             <button className="btn" disabled={busy || code.length < 6}>ログイン</button>
             <button type="button" className="link" onClick={() => { setSent(false); setCode(''); setMsg(null); }}>メールアドレスを直す</button>

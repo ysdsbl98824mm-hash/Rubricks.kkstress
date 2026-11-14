@@ -39,6 +39,8 @@ export function demoApi(): Api {
     session: async () => (signed ? { email: me.email } : null),
     onAuthChange() {},
     async sendCode() {},
+    async signInGoogle() { signed = true; },
+    whoami: async () => ({ ...me, consent_at: consented ? me.consent_at : null }),
     async verifyCode() { signed = true; },
     async signOut() { signed = false; },
     link: async () => 'me',

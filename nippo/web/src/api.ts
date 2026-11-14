@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { ContactData, DayData, DaySubmit, InspectResult, MyData, OpsData } from './types';
+import type { ContactData, DayData, DaySubmit, InspectResult, Me, MyData, OpsData } from './types';
 import { demoApi } from './demo';
 
 export interface Api {
@@ -8,8 +8,10 @@ export interface Api {
   onAuthChange(cb: () => void): void;
   sendCode(email: string): Promise<void>;
   verifyCode(email: string, code: string): Promise<void>;
+  signInGoogle(): Promise<void>;
   signOut(): Promise<void>;
   link(): Promise<string | null>;
+  whoami(): Promise<Me | null>;
   consent(): Promise<void>;
   myData(days?: number): Promise<MyData>;
   day(date: string): Promise<DayData>;
@@ -43,7 +45,15 @@ function realApi(sb: SupabaseClient): Api {
   return {
     demo: false,
     async session() { const { data } = await sb.auth.getSession(); return data.session ? { email: data.session.user.email ?? '' } : null; },
-    onAuthChange(cb) { sb.auth.onAuthStateChange(() => cb()); },
+    onAuthChange(cb) {
+      // ログインした人が変わったときだけ呼ぶ（トークンの更新やタブの切り替えでは読み直さない）
+      let last: string | null | undefined;
+      sb.auth.onAuthStateChange((_ev, session) => {
+        const uid = session?.user.id ?? null;
+        if (last === undefined) { last = uid; return; }
+        if (uid !== last) { last = uid; cb(); }
+      });
+    },
     async sendCode(email) {
       const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin } });
       if (error) throw new Error(error.message.includes('rate') ? '少し時間をおいてから、もう一度送ってください' : error.message);
@@ -52,8 +62,21 @@ function realApi(sb: SupabaseClient): Api {
       const { error } = await sb.auth.verifyOtp({ email, token: code, type: 'email' });
       if (error) throw new Error('コードが違うか、期限が切れています');
     },
+    async signInGoogle() {
+      const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin, queryParams: { prompt: 'select_account' } } });
+      if (error) throw new Error('Googleでのログインを始められませんでした');
+    },
     async signOut() { await sb.auth.signOut(); },
     async link() { const { data, error } = await sb.rpc('link_me'); if (error) throw error; return data as string | null; },
+    async whoami() {
+      const { data: u } = await sb.auth.getUser();
+      const uid = u.user?.id;
+      if (!uid) return null;
+      const { data, error } = await sb.from('members').select('id, name, email, is_operator, is_representative, consent_at')
+        .eq('auth_user_id', uid).eq('status', 'active').maybeSingle();
+      if (error) throw error;
+      return (data as Me | null) ?? null;
+    },
     async consent() { const { error } = await sb.rpc('give_consent'); if (error) throw error; },
     myData: (days = 60) => fn('me', { query: { days: String(days) } }),
     day: (date) => fn('day', { query: { date } }),

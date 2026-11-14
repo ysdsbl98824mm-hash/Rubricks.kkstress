@@ -30,10 +30,15 @@ export default function App() {
     try {
       const s = await api.session();
       if (!s) return setState({ kind: 'signed-out' });
-      const id = await api.link();
-      if (!id) return setState({ kind: 'not-member', email: s.email });
-      const d = await api.myData(7);
-      setState({ kind: 'ready', me: d.me });
+      // 2回目以降は1回の問い合わせで済む。初回ログインのときだけ、メンバー表との紐付けをする
+      let me = await api.whoami();
+      if (!me) {
+        const id = await api.link();
+        if (!id) return setState({ kind: 'not-member', email: s.email });
+        me = await api.whoami();
+        if (!me) return setState({ kind: 'not-member', email: s.email });
+      }
+      setState({ kind: 'ready', me });
     } catch (e) {
       setState({ kind: 'error', text: errText(e) });
     }

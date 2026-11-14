@@ -22,27 +22,28 @@ Deno.serve(handler(async (req) => {
 
   const qmap = new Map((qs.data ?? []).map((q) => [q.id, q]));
   const stress = new Map<string, { score: number; answers: { q: string; text: string; label: string; p: number }[] }>();
-  for (const s of sds.data ?? []) {
-    const answers = ((await decrypt<{ q: string; p: number }[]>(s.answers_enc)) ?? []).map((a) => {
+  // 復号は日ごとに独立しているので、まとめて並行して行う
+  await Promise.all((sds.data ?? []).map(async (s) => {
+    const [raw, score] = await Promise.all([decrypt<{ q: string; p: number }[]>(s.answers_enc), decrypt<number>(s.score_enc)]);
+    const answers = (raw ?? []).map((a) => {
       const q = qmap.get(a.q);
       const label = q?.choices.find((c: { points: number }) => c.points === a.p)?.label ?? '';
       return { q: a.q, text: q?.text ?? a.q, label, p: a.p };
     });
-    stress.set(s.date, { score: (await decrypt<number>(s.score_enc)) ?? 0, answers });
-  }
+    stress.set(s.date, { score: score ?? 0, answers });
+  }));
   const stage = new Map((sts.data ?? []).map((s) => [s.date, s]));
-  const rows = [];
-  for (const r of reps.data ?? []) {
+  const rows = await Promise.all((reps.data ?? []).map(async (r) => {
     const { feelings_enc, ...rest } = r;
     const st = stage.get(r.date);
-    rows.push({
+    return {
       ...rest,
       feelings: (await decrypt<string>(feelings_enc)) ?? '',
       work_hours: workHours(r.start_time, r.end_time),
       stress: stress.get(r.date) ?? null,
       stage: st && !st.held && st.stage !== null ? { value: st.stage, name: STAGE_NAMES[st.stage], raised: st.raised } : null,
-    });
-  }
+    };
+  }));
   const latest = [...(sts.data ?? [])].filter((s) => !s.held && s.stage !== null).sort((a, b) => b.date.localeCompare(a.date))[0];
   return json({
     me: { id: me.id, name: me.name, email: me.email, is_operator: me.is_operator, is_representative: me.is_representative, consent_at: me.consent_at },
